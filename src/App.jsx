@@ -10,12 +10,13 @@ function App() {
   const { wallets } = useWallets();
   const canvasRef = useRef(null);
   const [userName, setUserName] = useState("");
+  const [intervalTrigger, setIntervalTrigger] = useState(0);
   const [score, setScore] = useState(0);
   const { login, user, logout } = usePrivy();
   const [contract, setContract] = useState(null);
   const [leaderBoard, setLeaderBoard] = useState([]);
   const [userInfo, setUserInfo] = useState(null);
-
+  const [highScore, setHighScore] = useState(0);
   // scoreRef для актуального значення score у функції draw
   const scoreRef = useRef(score);
   const moleRef = useRef(null);
@@ -25,19 +26,19 @@ function App() {
   const isMobile = useMediaQuery("(max-width: 768px)");
 
   const isPhone = useMediaQuery("(max-width: 600px)");
-
+  const [monadSize, setMonadSize] = useState(isPhone ? 50 : 80);
   const [canvasSize, setCanvasSize] = useState({
     width: isMobile ? 300 : 450,
     height: isMobile ? 300 : 450,
   });
 
-  // 🛠 Оновлюємо розміри при зміні `isMobile`
   useEffect(() => {
     const updateCanvasSize = () => {
       setCanvasSize({
         width: isMobile ? 300 : 450,
         height: isMobile ? 300 : 450,
       });
+      setMonadSize(isPhone ? 50 : 80);
     };
 
     // Викликаємо функцію при зміні розміру екрану
@@ -47,40 +48,99 @@ function App() {
     updateCanvasSize();
 
     return () => window.removeEventListener("resize", updateCanvasSize);
-  }, [isMobile, isPhone]); // Залежність від `isMobile`
+  }, [isMobile, isPhone]);
 
-  // Використання
+  useEffect(() => {
+    if (!canvasRef.current) return;
 
-  const moleSize = isPhone ? 50 : 80; // Збільшений розмір кротика
-  // Початковий інтервал появи кротика – 3000 мс
+    draw(); // 🔥 Оновлюємо малювання при зміні розміру `canvas`
+    spawnMonad();
+    spawnTimeoutRef.current = setTimeout(spawnMonad, spawnIntervalRef.current);
+
+    const canvas = canvasRef.current;
+    const handleClick = (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width; // Масштабування X
+      const scaleY = canvas.height / rect.height; // Масштабування Y
+
+      const clickX = (e.clientX - rect.left) * scaleX;
+      const clickY = (e.clientY - rect.top) * scaleY;
+
+      if (moleRef.current) {
+        const mole = moleRef.current;
+
+        if (
+          clickX >= mole.x &&
+          clickX <= mole.x + mole.width &&
+          clickY >= mole.y &&
+          clickY <= mole.y + mole.height
+        ) {
+          clearTimeout(moleTimeoutRef.current);
+          setScore((prev) => prev + 1);
+
+          spawnIntervalRef.current = Math.max(
+            1000,
+            spawnIntervalRef.current - 50
+          );
+
+          moleRef.current = null;
+          draw();
+
+          if (spawnTimeoutRef.current) clearTimeout(spawnTimeoutRef.current);
+          spawnTimeoutRef.current = setTimeout(
+            spawnMonad,
+            spawnIntervalRef.current
+          );
+        } else {
+        }
+      }
+    };
+
+    canvas.addEventListener("click", handleClick);
+
+    return () => {
+      clearTimeout(spawnTimeoutRef.current);
+      clearTimeout(moleTimeoutRef.current);
+      canvas.removeEventListener("click", handleClick);
+    };
+  }, [canvasSize]); // 🔥 Оновлюємо кліки після зміни `canvasSize`
+
   const spawnIntervalRef = useRef(3000);
   const authenticated = user?.wallet;
-  // Завантаження SVG для кротика
+
   const fetchLeaderBoard = async () => {
+    if (!contract) {
+      return;
+    }
     const wallet = wallets[0];
 
-    if (wallet) {
+    if (wallet && contract) {
       try {
         const record = await contract.getLeaderBoard();
         setLeaderBoard(record);
-      } catch (error) {
-        console.error("Error fetch leader board:", error);
-      }
+      } catch (error) {}
     }
   };
 
   const fetchCurrentUserInfo = async () => {
+    if (!contract) {
+      return;
+    }
     const wallet = wallets[0];
-    if (wallet) {
+    if (wallet && contract) {
       try {
         const record = await contract.getRecord();
 
         setUserInfo(record);
-      } catch (error) {
-        console.error("Error fetch leader board:", error);
-      }
+      } catch (error) {}
     }
   };
+
+  useEffect(() => {
+    if (score > highScore) {
+      setHighScore(score);
+    }
+  }, [score]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -95,16 +155,72 @@ function App() {
   }, [isMobile]);
 
   const moleImageRef = useRef(new Image());
+
   useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
     moleImageRef.current.src = "monad.svg";
-    const interval = setInterval(() => {
+
+    const handleClick = (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const clickY = e.clientY - rect.top;
+
+      if (moleRef.current) {
+        const mole = moleRef.current;
+
+        if (
+          clickX >= mole.x &&
+          clickX <= mole.x + mole.width &&
+          clickY >= mole.y &&
+          clickY <= mole.y + mole.height
+        ) {
+          clearTimeout(moleTimeoutRef.current);
+          setScore((prev) => prev + 1);
+          spawnIntervalRef.current = Math.max(
+            1000,
+            spawnIntervalRef.current - 50
+          );
+          moleRef.current = null;
+          draw();
+          if (spawnTimeoutRef.current) clearTimeout(spawnTimeoutRef.current);
+          spawnTimeoutRef.current = setTimeout(
+            spawnMonad,
+            spawnIntervalRef.current
+          );
+        }
+      }
+    };
+
+    const fetchData = async () => {
+      await fetchLeaderBoard();
+      await fetchCurrentUserInfo();
+    };
+
+    fetchData();
+
+    const intervalId = setInterval(() => {
+      setIntervalTrigger((prev) => prev + 1);
+    }, 5000);
+
+    spawnTimeoutRef.current = setTimeout(spawnMonad, spawnIntervalRef.current);
+    canvas.addEventListener("click", handleClick);
+
+    return () => {
+      clearInterval(intervalId);
+      clearTimeout(spawnTimeoutRef.current);
+      clearTimeout(moleTimeoutRef.current);
+      canvas.removeEventListener("click", handleClick);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (contract) {
       fetchLeaderBoard();
       fetchCurrentUserInfo();
-    }, 5000); // Оновлення кожні 5 секунд
-
-    return () => clearInterval(interval);
-    // Замініть на шлях до вашого SVG
-  }, []);
+    }
+  }, [intervalTrigger]); // 🔥 Тепер це спрацює кожні 5 секунд
 
   // Оновлюємо scoreRef при зміні score
   useEffect(() => {
@@ -113,11 +229,12 @@ function App() {
   }, [score]);
 
   useEffect(() => {
-    if (userInfo?.username) {
+    if (userInfo) {
       setUserName(userInfo.username);
+      setHighScore(userInfo.score);
     }
   }, [userInfo]);
-  // Функція малювання канви, сітки та кротика
+
   const draw = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -144,7 +261,6 @@ function App() {
       ctx.stroke();
     }
 
-    // Малюємо кротика, якщо він існує, використовуючи SVG
     if (moleRef.current) {
       const mole = moleRef.current;
       if (moleImageRef.current.complete) {
@@ -156,7 +272,6 @@ function App() {
           mole.height
         );
       } else {
-        // Запасний варіант – малюємо коло
         ctx.fillStyle = "brown";
         ctx.beginPath();
         ctx.arc(
@@ -171,7 +286,6 @@ function App() {
     }
   };
 
-  // Функція для появи кротика
   const spawnMonad = () => {
     // Очистити попередній таймаут, якщо існує
     if (moleTimeoutRef.current) clearTimeout(moleTimeoutRef.current);
@@ -184,10 +298,10 @@ function App() {
     const row = Math.floor(Math.random() * gridRows);
 
     moleRef.current = {
-      x: col * holeWidth + holeWidth / 2 - moleSize / 2,
-      y: row * holeHeight + holeHeight / 2 - moleSize / 2,
-      width: moleSize,
-      height: moleSize,
+      x: col * holeWidth + holeWidth / 2 - monadSize / 2,
+      y: row * holeHeight + holeHeight / 2 - monadSize / 2,
+      width: monadSize,
+      height: monadSize,
     };
 
     draw();
@@ -207,78 +321,18 @@ function App() {
     }, spawnIntervalRef.current);
   };
 
-  // Обробка кліку по Canvas з логуванням координат
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const handleClick = (e) => {
-      const rect = canvas.getBoundingClientRect();
-      // Використовуємо e.offsetX та e.offsetY або розраховуємо відносно rect
-      const clickX = e.clientX - rect.left;
-      const clickY = e.clientY - rect.top;
-
-      if (moleRef.current) {
-        const mole = moleRef.current;
-
-        if (
-          clickX >= mole.x &&
-          clickX <= mole.x + mole.width &&
-          clickY >= mole.y &&
-          clickY <= mole.y + mole.height
-        ) {
-          clearTimeout(moleTimeoutRef.current); // зупиняємо таймаут зникнення кротика
-          setScore((prev) => prev + 1); // збільшуємо streak
-          // Зменшуємо інтервал на 50 мс, але не менше 1000 мс
-          spawnIntervalRef.current = Math.max(
-            1000,
-            spawnIntervalRef.current - 50
-          );
-          moleRef.current = null;
-          draw();
-          // Скидаємо попередній spawnTimeout та плануємо появу наступного кротика
-          if (spawnTimeoutRef.current) clearTimeout(spawnTimeoutRef.current);
-          spawnTimeoutRef.current = setTimeout(
-            spawnMonad,
-            spawnIntervalRef.current
-          );
-        } else {
-        }
-      } else {
-      }
-    };
-
-    canvas.addEventListener("click", handleClick);
-    return () => {
-      canvas.removeEventListener("click", handleClick);
-    };
-  }, []);
-
   const shortenAddress = (address) => {
     if (!address) return "";
     return `${address.slice(0, 6)}...${address.slice(-4)}`;
   };
 
-  // Старт гри – плануємо перший виклик spawnMonad
-  useEffect(() => {
-    spawnTimeoutRef.current = setTimeout(spawnMonad, spawnIntervalRef.current);
-    return () => {
-      clearTimeout(spawnTimeoutRef.current);
-      clearTimeout(moleTimeoutRef.current);
-    };
-  }, []);
-
-  useEffect(() => {
-    const wallet = wallets[0];
-    if (wallet && wallet?.chainId !== MONAD_CHAIN_ID) {
-      wallet.switchChain(+MONAD_CHAIN_ID);
-    }
-  }, [wallets]);
-
   useEffect(() => {
     const wallet = wallets[0];
 
     const loadContract = async () => {
+      if (wallet && wallet?.chainId !== MONAD_CHAIN_ID) {
+        wallet.switchChain(+MONAD_CHAIN_ID);
+      }
       if (wallet) {
         try {
           const provider = wallet.getEthereumProvider();
@@ -300,17 +354,31 @@ function App() {
 
   const sendUserName = async () => {
     const wallet = wallets[0];
-    if (wallet) {
-      await contract.updateUserName(userName, wallet.address);
-    } else {
+    if (!wallet) {
       login();
+      return;
+    }
+
+    try {
+      await contract.updateUserName(userName, wallet.address);
+
+      setTimeout(async () => {
+        await fetchCurrentUserInfo();
+      }, 2000);
+    } catch (error) {
+      console.error("❌ Error updating username:", error);
     }
   };
 
   const sendUserRank = async () => {
     const wallet = wallets[0];
     if (wallet) {
-      await contract.setRecord(score, wallet.address);
+      await contract.setRecord(highScore, wallet.address);
+
+      setTimeout(async () => {
+        console.log("🔄 Fetching updated user info...");
+        await fetchCurrentUserInfo();
+      }, 2000);
     } else {
       login();
     }
@@ -325,11 +393,13 @@ function App() {
 
     setUserName(newUsername);
   };
+
   const logOut = () => {
     logout();
     setUserName("");
     setUserInfo(null);
   };
+
   return (
     <div className='h-screen w-full relative flex flex-col overflow-hidden stardos-stencil-regular'>
       <div
@@ -433,7 +503,12 @@ function App() {
                   }`}>
                   <div className='mb-4'>
                     <p className={`text-xl ${isPhone && "!text-base"}`}>
-                      Your score: {score}
+                      High score: {highScore}
+                    </p>
+                  </div>
+                  <div className='mb-4'>
+                    <p className={`text-xl ${isPhone && "!text-base"}`}>
+                      score: {score}
                     </p>
                   </div>
                   <button
@@ -495,7 +570,7 @@ function App() {
         </div>
       ) : (
         <div className='h-[80%] flex flex-col w-full z-50'>
-          <div className='w-10/12 flex m-auto'>
+          <div className='w-11/12 flex m-auto'>
             <div className='w-3/12 flex flex-col items-center justify-center h-full'>
               <div className='bg-black/70 w-60 p-6 text-white rounded-lg flex flex-col items-center mb-10'>
                 <div className='mb-4'>
@@ -507,7 +582,10 @@ function App() {
               </div>
               <div className='bg-black/70 w-60 p-6 text-white rounded-lg flex flex-col items-center'>
                 <div className='mb-4'>
-                  <p className='text-xl'>Your score: {score}</p>
+                  <p className='text-xl'>High score: {highScore}</p>
+                </div>
+                <div className='mb-4'>
+                  <p className='text-xl'>Score: {score}</p>
                 </div>
                 <button
                   className='bg-[#676FFF] text-white px-4 py-2 hover:bg-[#735ce0] transition-colors cursor-pointer rounded-2xl'
@@ -533,7 +611,7 @@ function App() {
                 }}></canvas>
             </div>
             <div className='w-3/12 flex flex-col items-center justify-center h-full'>
-              <div className='bg-black/70 p-6 text-white rounded-xl'>
+              <div className='bg-black/70 p-6 text-white rounded-xl w-full mx-auto'>
                 <p className='text-2xl font-bold text-[#676FFF] text-shadow stardos-stencil-bold'>
                   Top catchers:
                 </p>
